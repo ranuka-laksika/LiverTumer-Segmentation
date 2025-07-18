@@ -1,3 +1,29 @@
+"""
+Liver Tumor Segmentation Model Testing Module
+
+This module provides functionality for testing and evaluating a trained deep learning
+model for liver tumor segmentation. It processes NIfTI (.nii) files, applies the
+trained model for inference, and evaluates segmentation performance.
+
+Key Features:
+- NIfTI file processing for model inference
+- Trained model loading and prediction
+- Performance evaluation and visualization
+- Batch processing of test datasets
+- Confusion matrix generation and analysis
+
+Dependencies:
+- fastai: Deep learning framework for model loading
+- nibabel: NIfTI file handling
+- opencv-cv2: Image processing and contour analysis
+- numpy, pandas: Data manipulation
+- matplotlib, seaborn: Visualization
+
+Author: Liver Tumor Segmentation Team
+Date: 2024
+License: MIT
+"""
+
 import numpy as np
 import pandas as pd
 import os
@@ -50,6 +76,23 @@ data_files = data_files[data_files.mask_filename != ''].sort_values(by=['filenam
 
 # Define a function to read NII files and convert them into a numpy array
 def read_nii(filepath):
+    """
+    Read NIfTI (.nii) file and convert to numpy array for inference.
+    
+    This function loads a NIfTI file and converts it to a properly oriented
+    numpy array suitable for model inference and visualization.
+    
+    Args:
+        filepath (str): Path to the NIfTI file to be loaded
+        
+    Returns:
+        numpy.ndarray: 3D array representing CT scan data with shape (height, width, slices)
+        
+    Note:
+        - Applies 90-degree rotation for proper medical image orientation
+        - Compatible with medical imaging standards
+        - Used for both CT scans and segmentation masks
+    """
     ct_scan = nib.load(filepath)
     array = ct_scan.get_fdata()
     array = np.rot90(np.array(array))
@@ -65,9 +108,38 @@ class_codes = np.array(["background", "liver", "tumor"])
 model_path = './'
 
 def get_x(file_path: Path):
+    """
+    Get input file path for FastAI data loading.
+    
+    Simple identity function used by FastAI's data loading pipeline
+    to specify how to obtain input files.
+    
+    Args:
+        file_path (Path): Path to input file
+        
+    Returns:
+        Path: The same file path (identity function)
+    """
     return file_path
 
 def label_func(x): 
+    """
+    Generate corresponding mask file path for input image.
+    
+    This function constructs the path to the segmentation mask that
+    corresponds to a given input image file, following the dataset
+    naming convention.
+    
+    Args:
+        x (Path): Path to input image file
+        
+    Returns:
+        Path: Path to corresponding mask file
+        
+    Note:
+        - Assumes masks are in 'train_masks' subdirectory
+        - Adds '_mask.png' suffix to the stem filename
+    """
     return model_path/'train_masks'/f'{x.stem}_mask.png'
 
 def foreground_accuracy(input_tensor, target_tensor, background_idx=0, axis=1):
@@ -77,6 +149,25 @@ def foreground_accuracy(input_tensor, target_tensor, background_idx=0, axis=1):
     return (input_tensor.argmax(dim=axis)[mask] == target_tensor[mask]).float().mean()
 
 def custom_foreground_accuracy(input_tensor, target_tensor):  
+    """
+    Custom foreground accuracy metric for liver tumor segmentation.
+    
+    This function provides a specialized accuracy calculation that excludes
+    background pixels, focusing on the segmentation performance of liver
+    and tumor regions.
+    
+    Args:
+        input_tensor (Tensor): Model predictions
+        target_tensor (Tensor): Ground truth segmentation masks
+        
+    Returns:
+        Tensor: Foreground accuracy value excluding background pixels
+        
+    Note:
+        - Uses background_idx=3 for specific requirements
+        - Wrapper for the generic foreground_accuracy function
+        - Essential for medical segmentation evaluation
+    """
     return foreground_accuracy(input_tensor=input_tensor, target_tensor=target_tensor, background_idx=3, axis=1)
 
 # Load the model
@@ -85,7 +176,26 @@ learned_model = load_learner('../input/trained-model/Liver_segmentation', cpu=Fa
 learned_model.dls.transform = transformations
 
 # Define a function to convert NII files for model prediction
-def nii_transformer(file_path, windows): 
+def nii_transformer(file_path, windows):
+    """
+    Transform NIfTI file into format suitable for model prediction.
+    
+    This function loads a NIfTI file, extracts a specific slice, applies
+    DICOM windowing, and converts it to the tensor format expected by
+    the trained model.
+    
+    Args:
+        file_path (str): Path to the NIfTI file
+        windows (list): List of DICOM window settings for multi-channel conversion
+        
+    Returns:
+        list: List containing transformed tensor images ready for prediction
+        
+    Note:
+        - Extracts slice 450 (hardcoded for specific dataset)
+        - Applies multi-channel windowing for enhanced features
+        - Converts to TensorImage format for FastAI compatibility
+    """ 
     slices = []
     ct_scan = read_nii(file_path)
     data = tensor(ct_scan[..., 450].astype(np.float32))
@@ -114,6 +224,25 @@ unique_values, value_counts = np.unique(predicted_mask_array, return_counts=True
 
 # Perform predictions on multiple images
 def nii_transformer_selective(file_path, windows, current_slice): 
+    """
+    Transform specific slice from NIfTI file for model prediction.
+    
+    This function extracts and transforms a specific slice from a NIfTI file,
+    allowing for slice-by-slice processing of volumetric medical data.
+    
+    Args:
+        file_path (str): Path to the NIfTI file
+        windows (list): List of DICOM window settings for multi-channel conversion
+        current_slice (int): Index of the slice to extract and process
+        
+    Returns:
+        list: List containing transformed tensor image for the specified slice
+        
+    Note:
+        - Enables selective slice processing for large volumes
+        - Applies same windowing and conversion as nii_transformer
+        - Used for batch processing and evaluation
+    """
     slices = []
     ct_scan = read_nii(file_path)
     data = tensor(ct_scan[..., current_slice].astype(np.float32))
@@ -122,6 +251,23 @@ def nii_transformer_selective(file_path, windows, current_slice):
     return slices
 
 def check_mask(mask_image):
+    """
+    Check if mask image contains any segmented regions.
+    
+    This function uses OpenCV to detect contours in a binary mask image,
+    determining whether any segmented regions (liver/tumor) are present.
+    
+    Args:
+        mask_image (numpy.ndarray): Binary mask image to analyze
+        
+    Returns:
+        int: 1 if contours are found, 0 if no contours detected
+        
+    Note:
+        - Uses external contour detection for robust analysis
+        - Essential for determining slice relevance in medical datasets
+        - Returns binary indicator for presence of segmented structures
+    """
     contours, hierarchy = cv2.findContours(mask_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if len(contours) > 0:
         return 1
@@ -224,6 +370,24 @@ for selected_number, volume_file_name, segmentation_file_name in zip(selected_nu
 
 # Use OpenCV to analyze mask images and save the results to a CSV file
 def check_mask_image(mask_image):
+    """
+    Analyze mask image for contour detection and classification.
+    
+    This function performs contour detection on segmentation masks to determine
+    the presence of anatomical structures, used for evaluation and validation
+    of segmentation results.
+    
+    Args:
+        mask_image (numpy.ndarray): Binary or grayscale mask image
+        
+    Returns:
+        int: 1 if contours are detected, 0 if no contours found
+        
+    Note:
+        - Identical to check_mask but used in different processing contexts
+        - Essential for automated quality assessment of segmentation
+        - Used in batch processing for CSV output generation
+    """
     contours, hierarchy = cv2.findContours(mask_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if len(contours) > 0:
         return 1
